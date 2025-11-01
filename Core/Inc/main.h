@@ -73,6 +73,8 @@ void Error_Handler(void);
 #define USART1_TX_SIM800L_GPIO_Port GPIOA
 #define USART1_RX_SIM800L_Pin GPIO_PIN_3
 #define USART1_RX_SIM800L_GPIO_Port GPIOA
+#define ADC1_IN4_POT_Pin GPIO_PIN_4
+#define ADC1_IN4_POT_GPIO_Port GPIOA
 #define LCD_RW_Pin GPIO_PIN_10
 #define LCD_RW_GPIO_Port GPIOD
 #define LCD_RS_Pin GPIO_PIN_11

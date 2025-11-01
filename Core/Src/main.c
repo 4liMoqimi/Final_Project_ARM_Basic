@@ -18,12 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "../../LCD16X2/LCD16X2.h"
-#include "../../Util/Util.h"
-
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
+#include "../../LCD16X2/LCD16X2.h"
+#include "../../Util/Util.h"
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -35,7 +36,9 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define MyLCD LCD16X2_1
+#define MyLCD     LCD16X2_1
+#define LCD_INDEX    0
+#define NUM_CHANNELS 2
 
 /* USER CODE END PD */
 
@@ -54,6 +57,10 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+uint8_t Mode=0;
+uint16_t adc_temp = 0;
+uint16_t ADC_Values[NUM_CHANNELS];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,6 +71,10 @@ static void MX_TIM1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
+
+void  Read_ADC_Value(void);
+float Convert_Temp_To_Celsius(uint16_t adc_value);
+void Display_ADC_On_LCD(void);
 
 /* USER CODE END PFP */
 
@@ -120,15 +131,28 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      LCD16X2_SR(MyLCD);  HAL_Delay(1500);
-      LCD16X2_SR(MyLCD);  HAL_Delay(1500);
-      LCD16X2_SR(MyLCD);  HAL_Delay(1500);
-      LCD16X2_SR(MyLCD);  HAL_Delay(1500);
 
-      LCD16X2_SL(MyLCD);  HAL_Delay(1500);
-      LCD16X2_SL(MyLCD);  HAL_Delay(1500);
-      LCD16X2_SL(MyLCD);  HAL_Delay(1500);
-      LCD16X2_SL(MyLCD);  HAL_Delay(1500);
+//	  if(Mode == 0)
+//	  {
+//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
+//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
+//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
+//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
+//
+//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
+//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
+//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
+//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
+//
+//		  Mode ++;
+//	  }
+//
+//	  if(Mode == 1)
+//	  {
+		  Display_ADC_On_LCD();
+
+		  HAL_Delay(500);
+//	  }
 
     /* USER CODE END WHILE */
 
@@ -217,9 +241,9 @@ static void MX_ADC1_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -227,9 +251,9 @@ static void MX_ADC1_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = 2;
-  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -443,6 +467,51 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void Read_ADC_Value(void)
+{
+    HAL_ADC_Start(&hadc1);
+
+    for(uint8_t i=0; i<NUM_CHANNELS; i++)
+    {
+        HAL_ADC_PollForConversion(&hadc1, 100);
+        ADC_Values[i] = HAL_ADC_GetValue(&hadc1);
+    }
+
+    HAL_ADC_Stop(&hadc1);
+}
+
+float Convert_Temp_To_Celsius(uint16_t adc_value)
+{
+
+		float Vsense = ((float)adc_value * 3.3f) / 4095.0f;
+
+		float temperature = ((Vsense - 0.76f) / 0.0025f) + 25.0f;
+
+		return temperature;
+}
+
+void Display_ADC_On_LCD(void)
+{
+    float temperature;
+
+    char line[17];
+
+   Read_ADC_Value();
+
+   temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
+
+    LCD16X2_Clear(0);
+
+    LCD16X2_Set_Cursor(0, 1, 1);
+
+    snprintf(line, sizeof(line), "POT:%4u", ADC_Values[0]);
+    LCD16X2_Write_String(0, line);
+
+    LCD16X2_Set_Cursor(0, 2, 1);
+    snprintf(line, sizeof(line), "TEMP:%.1fC", temperature);
+    LCD16X2_Write_String(0, line);
+}
 
 /* USER CODE END 4 */
 
