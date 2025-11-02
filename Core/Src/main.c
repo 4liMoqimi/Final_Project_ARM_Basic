@@ -26,6 +26,8 @@
 #include "../../Util/Util.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
 
 /* USER CODE END Includes */
 
@@ -62,6 +64,10 @@ uint8_t Mode=0;
 //uint16_t adc_temp = 0;
 uint16_t ADC_Values[NUM_CHANNELS];
 
+uint8_t rxBuffer[128];
+uint8_t txBuffer[128];
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,6 +83,8 @@ void  Read_ADC_Value(void);
 float Convert_Temp_To_Celsius(uint16_t adc_value);
 void Display_ADC_On_LCD(void);
 void RGB_Set_Color(uint16_t pot);
+void Send_AT_Command(char *cmd);
+void Read_SIM800_Response(void);
 
 /* USER CODE END PFP */
 
@@ -130,6 +138,14 @@ int main(void)
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
+	Send_AT_Command("AT");
+	Read_SIM800_Response();
+	HAL_Delay(2000);
+
+	Send_AT_Command("AT+CSQ");
+	Read_SIM800_Response();
+	HAL_Delay(2000);
 
   /* USER CODE END 2 */
 
@@ -612,6 +628,23 @@ void RGB_Set_Color(uint16_t pot)
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 4095 - g);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 4095 - b);
 }
+
+void Send_AT_Command(char *cmd)
+{
+    sprintf((char*)txBuffer, "%s\r\n", cmd);
+    HAL_UART_Transmit(&huart2, txBuffer, strlen((char*)txBuffer), 1000);
+}
+
+
+void Read_SIM800_Response(void)
+{
+    memset(rxBuffer, 0, sizeof(rxBuffer));
+    HAL_UART_Receive(&huart2, rxBuffer, sizeof(rxBuffer)-1, 2000); //timeout 2s
+    LCD16X2_Clear(0);
+    LCD16X2_Set_Cursor(0,1,1);
+    LCD16X2_Write_String(0, (char*)rxBuffer);
+}
+
 
 /* USER CODE END 4 */
 
