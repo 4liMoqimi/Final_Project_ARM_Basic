@@ -25,6 +25,7 @@
 #include "../../LCD16X2/LCD16X2.h"
 #include "../../Util/Util.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 /* USER CODE END Includes */
 
@@ -58,7 +59,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 
 uint8_t Mode=0;
-uint16_t adc_temp = 0;
+//uint16_t adc_temp = 0;
 uint16_t ADC_Values[NUM_CHANNELS];
 
 /* USER CODE END PV */
@@ -75,6 +76,7 @@ static void MX_USART2_UART_Init(void);
 void  Read_ADC_Value(void);
 float Convert_Temp_To_Celsius(uint16_t adc_value);
 void Display_ADC_On_LCD(void);
+void RGB_Set_Color(uint16_t pot);
 
 /* USER CODE END PFP */
 
@@ -125,6 +127,10 @@ int main(void)
 	LCD16X2_Set_Cursor(MyLCD, 2, 1);
 	LCD16X2_Write_String(MyLCD, "STM32 Course");
 
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -150,6 +156,17 @@ int main(void)
 //	  if(Mode == 1)
 //	  {
 		  Display_ADC_On_LCD();
+
+		  RGB_Set_Color(ADC_Values[0]);
+
+//		  RGB_Set_Color(1000, 0 , 0);
+//		  HAL_Delay(1000);
+//
+//		  RGB_Set_Color(0, 0 , 1000);
+//		  HAL_Delay(1000);
+//
+//		  RGB_Set_Color(0, 1000 , 0);
+//		  HAL_Delay(1000);
 
 		  HAL_Delay(500);
 //	  }
@@ -287,7 +304,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 16-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 1000;
+  htim1.Init.Period = 4095;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -317,15 +334,15 @@ static void MX_TIM1_Init(void)
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -494,23 +511,106 @@ float Convert_Temp_To_Celsius(uint16_t adc_value)
 void Display_ADC_On_LCD(void)
 {
     float temperature;
+    uint16_t pot ;
 
     char line[17];
 
    Read_ADC_Value();
 
    temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
+   pot = ADC_Values[0];
 
     LCD16X2_Clear(0);
 
     LCD16X2_Set_Cursor(0, 1, 1);
 
-    snprintf(line, sizeof(line), "POT:%4u", ADC_Values[0]);
+    snprintf(line, sizeof(line), "POT:%4u", pot);
     LCD16X2_Write_String(0, line);
 
     LCD16X2_Set_Cursor(0, 2, 1);
     snprintf(line, sizeof(line), "TEMP:%.1fC", temperature);
     LCD16X2_Write_String(0, line);
+}
+
+//void RGB_Set_Color(uint16_t pot)
+//{
+//
+//	uint16_t red, green, blue;
+//
+//
+//    if (pot < 1365)  // 0 ~ 1/3
+//    {
+//        red = 4095 - pot;
+//        green = pot * 3;
+//        blue = 0;
+//    }
+//    else if ((pot < 2730))  // 1/3 ~ 2/3
+//    {
+//        red = 0;
+//        green = 4095 - (pot - 1365) * 3;
+//        blue = (pot - 1365) * 3;
+//    }
+//    else // 2/3 ~ 4095
+//    {
+//        red = (pot - 2730) * 3;
+//        green = 0;
+//        blue = 4095 - (pot - 2730) * 3;
+//    }
+//
+//	  if(red>4095)   red   = 4095;
+//	  if(green>4095) green = 4095;
+//	  if(blue>4095)  blue  = 4095;
+//
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2,(4095 - red));  //Common (Anode 1000-x)
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3,(4095 - green));
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4,(4095 - blue));
+//}
+
+void RGB_Set_Color(uint16_t pot)
+{
+    uint16_t r, g, b;
+
+    if(pot < 683)          // 0 - 682
+    {
+        r = 4095;
+        g = (pot * 4095) / 682;
+        b = 0;
+    }
+    else if(pot < 1366)    // 683 - 1365
+    {
+        r = 4095 - ((pot - 683) * 4095) / 682;
+        g = 4095;
+        b = 0;
+    }
+    else if(pot < 2048)    // 1366 - 2047
+    {
+        r = 0;
+        g = 4095;
+        b = ((pot - 1366) * 4095) / 682;
+    }
+    else if(pot < 2730)    // 2048 - 2729
+    {
+        r = 0;
+        g = 4095 - ((pot - 2048) * 4095) / 682;
+        b = 4095;
+    }
+    else if(pot < 3413)    // 2730 - 3412
+    {
+        r = ((pot - 2730) * 4095) / 682;
+        g = 0;
+        b = 4095;
+    }
+    else                   // 3413 - 4095
+    {
+        r = 4095;
+        g = 0;
+        b = 4095 - ((pot - 3413) * 4095) / 682;
+    }
+
+    // برای آند مشترک
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 4095 - r);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 4095 - g);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 4095 - b);
 }
 
 /* USER CODE END 4 */
