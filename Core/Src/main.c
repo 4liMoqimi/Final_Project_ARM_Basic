@@ -2,16 +2,12 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
+  * @brief          : Main program body - IMPROVED VERSION
   ******************************************************************************
   * @attention
   *
   * Copyright (c) 2025 STMicroelectronics.
   * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
   */
@@ -27,12 +23,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <stdbool.h>
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+
+typedef enum {
+    SIM_IDLE = 0,
+    SIM_WAIT_RESPONSE,
+    SIM_READY
+} SIM_State_t;
 
 /* USER CODE END PTD */
 
@@ -42,6 +44,22 @@
 #define MyLCD     LCD16X2_1
 #define LCD_INDEX    0
 #define NUM_CHANNELS 2
+
+// Timing intervals (ms)
+#define UPDATE_LCD_INTERVAL     500
+#define UPDATE_RGB_INTERVAL     50
+#define CHECK_UART_INTERVAL     100
+#define ADC_READ_INTERVAL       100
+
+// UART buffer sizes
+#define UART_RX_BUFFER_SIZE     256
+#define UART_TX_BUFFER_SIZE     128
+
+// RGB bounds
+#define POT_MAX_VALUE          4095
+#define RGB_MAX_VALUE          4095
+#define RGB_SECTORS            6
+#define SECTOR_SIZE            683  // 4095/6 ≈ 683
 
 /* USER CODE END PD */
 
@@ -60,13 +78,31 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-uint8_t Mode=0;
-//uint16_t adc_temp = 0;
-uint16_t ADC_Values[NUM_CHANNELS];
+// ADC values
+uint16_t ADC_Values[NUM_CHANNELS] = {0};
 
-uint8_t rxBuffer[128];
-uint8_t txBuffer[128];
+// UART buffers
+uint8_t rxBuffer[UART_RX_BUFFER_SIZE] = {0};
+uint8_t txBuffer[UART_TX_BUFFER_SIZE] = {0};
+uint8_t uartRxByte = 0;
+uint16_t rxIndex = 0;
 
+// Timing variables
+uint32_t lastLcdUpdate = 0;
+uint32_t lastRgbUpdate = 0;
+uint32_t lastAdcRead = 0;
+
+// Flags
+volatile bool uartLineReady = false;
+volatile bool adcReady = false;
+
+// SIM800 state
+SIM_State_t simState = SIM_IDLE;
+uint32_t simTimeout = 0;
+
+// Error counters
+uint16_t adcErrorCount = 0;
+uint16_t uartErrorCount = 0;
 
 /* USER CODE END PV */
 
@@ -79,12 +115,25 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
-void  Read_ADC_Value(void);
+// ADC functions
+HAL_StatusTypeDef Read_ADC_Value(void);
 float Convert_Temp_To_Celsius(uint16_t adc_value);
 void Display_ADC_On_LCD(void);
+
+// RGB LED functions
 void RGB_Set_Color(uint16_t pot);
-void Send_AT_Command(char *cmd);
-void Read_SIM800_Response(void);
+void RGB_Off(void);
+
+// SIM800 functions
+HAL_StatusTypeDef Send_AT_Command(const char *cmd);
+void Process_UART_Line(void);
+void Parse_SIM800_Response(void);
+void Init_SIM800(void);
+void Check_SMS_Commands(void);
+
+// Utility functions
+void Update_System_Tasks(void);
+void Handle_Errors(void);
 
 /* USER CODE END PFP */
 
@@ -99,7 +148,6 @@ void Read_SIM800_Response(void);
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -128,28 +176,43 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-	LCD16X2_Init(MyLCD);
-	LCD16X2_Clear(MyLCD);
-	LCD16X2_Set_Cursor(MyLCD, 1, 1);
-	LCD16X2_Write_String(MyLCD, "  DeepBlue");
-	LCD16X2_Set_Cursor(MyLCD, 2, 1);
-	LCD16X2_Write_String(MyLCD, "STM32 Course");
+  // Initialize LCD
+  LCD16X2_Init(MyLCD);
+  LCD16X2_Clear(MyLCD);
+  LCD16X2_Set_Cursor(MyLCD, 1, 1);
+  LCD16X2_Write_String(MyLCD, "  DeepBlue");
+  LCD16X2_Set_Cursor(MyLCD, 2, 1);
+  LCD16X2_Write_String(MyLCD, "STM32 Course");
+  HAL_Delay(2000);
 
-	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+  // Start PWM for RGB LED
+  if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) {
+      Error_Handler();
+  }
+  if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) {
+      Error_Handler();
+  }
+  if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK) {
+      Error_Handler();
+  }
 
-	Send_AT_Command("AT");
-	Read_SIM800_Response();
-	HAL_Delay(2000);
+  // Turn off RGB initially
+  RGB_Off();
 
-	Send_AT_Command("AT+CSQ");
-	Read_SIM800_Response();
-	HAL_Delay(3000);
+  // Start UART interrupt reception
+  HAL_UART_Receive_IT(&huart2, &uartRxByte, 1);
 
-	Send_AT_Command("AT+CREG?");
-	Read_SIM800_Response();
-	HAL_Delay(3000);
+  // Initialize SIM800
+  LCD16X2_Clear(MyLCD);
+  LCD16X2_Set_Cursor(MyLCD, 1, 1);
+  LCD16X2_Write_String(MyLCD, "Init SIM800...");
+
+  Init_SIM800();
+
+  LCD16X2_Clear(MyLCD);
+  LCD16X2_Set_Cursor(MyLCD, 1, 1);
+  LCD16X2_Write_String(MyLCD, "System Ready!");
+  HAL_Delay(1000);
 
   /* USER CODE END 2 */
 
@@ -157,39 +220,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+      Update_System_Tasks();
 
-//	  if(Mode == 0)
-//	  {
-//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
-//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
-//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
-//		  LCD16X2_SR(MyLCD);  HAL_Delay(1000);
-//
-//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
-//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
-//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
-//		  LCD16X2_SL(MyLCD);  HAL_Delay(1000);
-//
-//		  Mode ++;
-//	  }
-//
-//	  if(Mode == 1)
-//	  {
-		  Display_ADC_On_LCD();
-
-		  RGB_Set_Color(ADC_Values[0]);
-
-//		  RGB_Set_Color(1000, 0 , 0);
-//		  HAL_Delay(1000);
-//
-//		  RGB_Set_Color(0, 0 , 1000);
-//		  HAL_Delay(1000);
-//
-//		  RGB_Set_Color(0, 1000 , 0);
-//		  HAL_Delay(1000);
-
-		  HAL_Delay(500);
-//	  }
+      Handle_Errors();
 
     /* USER CODE END WHILE */
 
@@ -505,236 +538,270 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-void Read_ADC_Value(void)
+/**
+  * @brief  Update all system tasks based on timing
+  * @retval None
+  */
+void Update_System_Tasks(void)
 {
-    HAL_ADC_Start(&hadc1);
+    uint32_t currentTime = HAL_GetTick();
 
-    for(uint8_t i=0; i<NUM_CHANNELS; i++)
+    // Read ADC periodically
+    if (currentTime - lastAdcRead >= ADC_READ_INTERVAL)
     {
-        HAL_ADC_PollForConversion(&hadc1, 100);
+        if (Read_ADC_Value() == HAL_OK)
+        {
+            adcReady = true;
+            adcErrorCount = 0;
+        }
+        else
+        {
+            adcErrorCount++;
+        }
+        lastAdcRead = currentTime;
+    }
+
+    // Update LCD display
+    if (currentTime - lastLcdUpdate >= UPDATE_LCD_INTERVAL)
+    {
+        if (adcReady)
+        {
+            Display_ADC_On_LCD();
+        }
+        lastLcdUpdate = currentTime;
+    }
+
+    // Update RGB LED
+    if (currentTime - lastRgbUpdate >= UPDATE_RGB_INTERVAL)
+    {
+        if (adcReady)
+        {
+            RGB_Set_Color(ADC_Values[0]);
+        }
+        lastRgbUpdate = currentTime;
+    }
+
+    // Process UART data
+    if (uartLineReady)
+    {
+        uartLineReady = false;
+        Process_UART_Line();
+    }
+}
+
+/**
+  * @brief  Read ADC values for all channels
+  * @retval HAL status
+  */
+HAL_StatusTypeDef Read_ADC_Value(void)
+{
+    HAL_StatusTypeDef status;
+
+    status = HAL_ADC_Start(&hadc1);
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    for(uint8_t i = 0; i < NUM_CHANNELS; i++)
+    {
+        status = HAL_ADC_PollForConversion(&hadc1, 100);
+        if (status != HAL_OK)
+        {
+            HAL_ADC_Stop(&hadc1);
+            return status;
+        }
         ADC_Values[i] = HAL_ADC_GetValue(&hadc1);
     }
 
     HAL_ADC_Stop(&hadc1);
+    return HAL_OK;
 }
 
+/**
+  * @brief  Convert ADC value to temperature in Celsius
+  * @param  adc_value: Raw ADC value from temperature sensor
+  * @retval Temperature in Celsius
+  */
 float Convert_Temp_To_Celsius(uint16_t adc_value)
 {
+    // STM32F4 internal temperature sensor formula
+    // Vsense = (adc_value * Vref) / 4095
+    // Temperature = ((Vsense - V25) / Avg_Slope) + 25
+    // V25 ≈ 0.76V, Avg_Slope ≈ 2.5mV/°C
 
-		float Vsense = ((float)adc_value * 3.3f) / 4095.0f;
+    float Vsense = ((float)adc_value * 3.3f) / 4095.0f;
+    float temperature = ((Vsense - 0.76f) / 0.0025f) + 25.0f;
 
-		float temperature = ((Vsense - 0.76f) / 0.0025f) + 25.0f;
-
-		return temperature;
+    return temperature;
 }
 
+/**
+  * @brief  Display ADC values on LCD
+  * @retval None
+  */
 void Display_ADC_On_LCD(void)
 {
     float temperature;
-    uint16_t pot ;
-
+    uint16_t pot;
     char line[17];
 
-   Read_ADC_Value();
+    temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
+    pot = ADC_Values[0];
 
-   temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
-   pot = ADC_Values[0];
+    LCD16X2_Clear(LCD_INDEX);
 
-    LCD16X2_Clear(0);
-
-    LCD16X2_Set_Cursor(0, 1, 1);
-
+    // Display potentiometer value
+    LCD16X2_Set_Cursor(LCD_INDEX, 1, 1);
     snprintf(line, sizeof(line), "POT:%4u", pot);
-    LCD16X2_Write_String(0, line);
+    LCD16X2_Write_String(LCD_INDEX, line);
 
-    LCD16X2_Set_Cursor(0, 2, 1);
+    // Display temperature
+    LCD16X2_Set_Cursor(LCD_INDEX, 2, 1);
     snprintf(line, sizeof(line), "TEMP:%.1fC", temperature);
-    LCD16X2_Write_String(0, line);
+    LCD16X2_Write_String(LCD_INDEX, line);
 }
 
-//void RGB_Set_Color(uint16_t pot)
-//{
-//
-//	uint16_t red, green, blue;
-//
-//
-//    if (pot < 1365)  // 0 ~ 1/3
-//    {
-//        red = 4095 - pot;
-//        green = pot * 3;
-//        blue = 0;
-//    }
-//    else if ((pot < 2730))  // 1/3 ~ 2/3
-//    {
-//        red = 0;
-//        green = 4095 - (pot - 1365) * 3;
-//        blue = (pot - 1365) * 3;
-//    }
-//    else // 2/3 ~ 4095
-//    {
-//        red = (pot - 2730) * 3;
-//        green = 0;
-//        blue = 4095 - (pot - 2730) * 3;
-//    }
-//
-//	  if(red>4095)   red   = 4095;
-//	  if(green>4095) green = 4095;
-//	  if(blue>4095)  blue  = 4095;
-//
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2,(4095 - red));  //Common (Anode 1000-x)
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3,(4095 - green));
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4,(4095 - blue));
-//}
-
+/**
+  * @brief  Set RGB LED color based on potentiometer value (Rainbow effect)
+  * @param  pot: Potentiometer value (0-4095)
+  * @retval None
+  */
 void RGB_Set_Color(uint16_t pot)
 {
+    // Limit input value
+    if (pot > POT_MAX_VALUE)
+    {
+        pot = POT_MAX_VALUE;
+    }
+
     uint16_t r, g, b;
 
-    if(pot < 683)          // 0 - 682
+    // Divide the range into 6 sectors for rainbow effect
+    uint16_t sector = pot / SECTOR_SIZE;
+    uint16_t offset = pot % SECTOR_SIZE;
+    uint16_t value = (offset * RGB_MAX_VALUE) / SECTOR_SIZE;
+
+    switch(sector)
     {
-        r = 4095;
-        g = (pot * 4095) / 682;
-        b = 0;
-    }
-    else if(pot < 1366)    // 683 - 1365
-    {
-        r = 4095 - ((pot - 683) * 4095) / 682;
-        g = 4095;
-        b = 0;
-    }
-    else if(pot < 2048)    // 1366 - 2047
-    {
-        r = 0;
-        g = 4095;
-        b = ((pot - 1366) * 4095) / 682;
-    }
-    else if(pot < 2730)    // 2048 - 2729
-    {
-        r = 0;
-        g = 4095 - ((pot - 2048) * 4095) / 682;
-        b = 4095;
-    }
-    else if(pot < 3413)    // 2730 - 3412
-    {
-        r = ((pot - 2730) * 4095) / 682;
-        g = 0;
-        b = 4095;
-    }
-    else                   // 3413 - 4095
-    {
-        r = 4095;
-        g = 0;
-        b = 4095 - ((pot - 3413) * 4095) / 682;
+        case 0:  // Red to Yellow
+            r = RGB_MAX_VALUE;
+            g = value;
+            b = 0;
+            break;
+
+        case 1:  // Yellow to Green
+            r = RGB_MAX_VALUE - value;
+            g = RGB_MAX_VALUE;
+            b = 0;
+            break;
+
+        case 2:  // Green to Cyan
+            r = 0;
+            g = RGB_MAX_VALUE;
+            b = value;
+            break;
+
+        case 3:  // Cyan to Blue
+            r = 0;
+            g = RGB_MAX_VALUE - value;
+            b = RGB_MAX_VALUE;
+            break;
+
+        case 4:  // Blue to Magenta
+            r = value;
+            g = 0;
+            b = RGB_MAX_VALUE;
+            break;
+
+        default:  // Magenta to Red (sector 5+)
+            r = RGB_MAX_VALUE;
+            g = 0;
+            b = RGB_MAX_VALUE - value;
+            break;
     }
 
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 4095 - r);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 4095 - g);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 4095 - b);
+    // Set PWM values (inverted because of common anode RGB LED)
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, RGB_MAX_VALUE - r);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, RGB_MAX_VALUE - g);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, RGB_MAX_VALUE - b);
 }
-
-void Send_AT_Command(char *cmd)
-{
-    sprintf((char*)txBuffer, "%s\r\n", cmd);
-    HAL_UART_Transmit(&huart2, txBuffer, strlen((char*)txBuffer), 1000);
-
-}
-
-//void Read_SIM800_Response(void)
-//{
-//    memset(rxBuffer, 0, sizeof(rxBuffer));
-//    HAL_UART_Receive(&huart2, rxBuffer, sizeof(rxBuffer)-1, 2000); //timeout 2s
-//    LCD16X2_Clear(0);
-//    LCD16X2_Set_Cursor(0,1,1);
-//    LCD16X2_Write_String(0, (char*)rxBuffer);
-//}
-
-void Read_SIM800_Response(void)
-{
-    memset(rxBuffer, 0, sizeof(rxBuffer));
-
-    HAL_UART_Receive(&huart2, rxBuffer, sizeof(rxBuffer) - 1, 3000);
-
-    LCD16X2_Clear(0);
-
-
-    char cleanBuf[64];
-    uint8_t j = 0;
-
-    uint8_t skipFirstLine = 1;
-    for (uint16_t i = 0; i < strlen((char*)rxBuffer); i++)
-    {
-        char c = rxBuffer[i];
-
-        if (c == '\r' || c == '\n')
-        {
-            if (skipFirstLine)
-            {
-                skipFirstLine = 0;
-                j = 0;
-            }
-            else
-            {
-
-            	if (j > 0 && cleanBuf[j-1] != ' ')
-                    cleanBuf[j++] = ' ';
-            }
-        }
-        else if (c >= 32 && c <= 126)
-        {
-            cleanBuf[j++] = c;
-        }
-    }
-    cleanBuf[j] = '\0';
-
-
-    LCD16X2_Set_Cursor(0, 1, 1);
-    uint8_t row = 1;
-    uint8_t col = 1;
-
-    for (uint16_t k = 0; k < strlen(cleanBuf); k++)
-    {
-        LCD16X2_Write_Char(0, cleanBuf[k]);
-        col++;
-
-        if (row == 2 && col > 16)
-        {
-            col = 1;
-            row++;
-            if (row > 2) break;
-            LCD16X2_Set_Cursor(0, row, col);
-        }
-    }
-}
-
-/* USER CODE END 4 */
 
 /**
-  * @brief  This function is executed in case of error occurrence.
+  * @brief  Turn off RGB LED
   * @retval None
   */
+void RGB_Off(void)
+{
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, RGB_MAX_VALUE);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, RGB_MAX_VALUE);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, RGB_MAX_VALUE);
+}
+
+/**
+  * @brief  Send AT command to SIM800
+  * @param  cmd: AT command string
+  * @retval HAL status
+  */
+HAL_StatusTypeDef Send_AT_Command(const char *cmd)
+{
+    HAL_StatusTypeDef status;
+
+    // Clear TX buffer
+    memset(txBuffer, 0, sizeof(txBuffer));
+
+    // Format command with CR+LF
+    snprintf((char*)txBuffer, sizeof(txBuffer), "%s\r\n", cmd);
+
+    // Send command
+    status = HAL_UART_Transmit(&huart2, txBuffer, strlen((char*)txBuffer), 1000);
+
+    if (status != HAL_OK)
+    {
+        uartErrorCount++;
+    }
+
+    return status;
+}
+
+/**
+  * @brief  Initialize SIM800 module
+  * @retval None
+  */
+void Init_SIM800(void)
+{
+    // Test AT
+    Send_AT_Command("AT");
+    HAL_Delay(1000);
+
+    // Check signal quality
+    Send_AT_Command("AT+CSQ");
+    HAL_Delay(1000);
+
+    // Set SMS text mode
+    Send_AT_Command("AT+CMGF=1");
+    HAL_Delay(1000);
+}
+
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
+    __disable_irq(); // غیر فعال کردن وقفه‌ها
+    while(1)
+    {
+        // اینجا می‌توانی LED چشمک زن بزاری یا فقط حلقه بی‌پایان باشه
+    }
 }
-#ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
-void assert_failed(uint8_t *file, uint32_t line)
+
+// اسکلت Handle_Errors (اختیاری)
+void Handle_Errors(void)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
+    Error_Handler();
 }
-#endif /* USE_FULL_ASSERT */
+
+// اسکلت Process_UART_Line
+void Process_UART_Line(void)
+{
+    // فعلاً خالی بگذار
+}
+
+    // Configure SMS notification

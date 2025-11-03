@@ -57,6 +57,9 @@ Final_Project_ARM_Basic.list \
 OBJCOPY_HEX += \
 Final_Project_ARM_Basic.hex \
 
+OBJCOPY_BIN += \
+Final_Project_ARM_Basic.bin \
+
 
 # All Target
 all: main-build
@@ -65,8 +68,8 @@ all: main-build
 main-build: Final_Project_ARM_Basic.elf secondary-outputs
 
 # Tool invocations
-Final_Project_ARM_Basic.elf Final_Project_ARM_Basic.map: $(OBJS) $(USER_OBJS) D:\GIT_Hub\STM32CubeIDE\workspace_1.19.0\ARM\Final_Project_ARM_Basic\Final_Project_ARM_Basic\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "Final_Project_ARM_Basic.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\GIT_Hub\STM32CubeIDE\workspace_1.19.0\ARM\Final_Project_ARM_Basic\Final_Project_ARM_Basic\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Final_Project_ARM_Basic.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -u _scanf_float -Wl,--start-group -lc -lm -Wl,--end-group
+Final_Project_ARM_Basic.elf Final_Project_ARM_Basic.map: $(OBJS) $(USER_OBJS) D:\GIT_Hub\STM32CubeIDE\workspace_1.19.0\ARM\Final_Project_ARM_Basic_v.2\Final_Project_ARM_Basic\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "Final_Project_ARM_Basic.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\GIT_Hub\STM32CubeIDE\workspace_1.19.0\ARM\Final_Project_ARM_Basic_v.2\Final_Project_ARM_Basic\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Final_Project_ARM_Basic.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -u _scanf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -85,12 +88,17 @@ Final_Project_ARM_Basic.hex: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOO
 	@echo 'Finished building: $@'
 	@echo ' '
 
+Final_Project_ARM_Basic.bin: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objcopy  -O binary $(EXECUTABLES) "Final_Project_ARM_Basic.bin"
+	@echo 'Finished building: $@'
+	@echo ' '
+
 # Other Targets
 clean:
-	-$(RM) Final_Project_ARM_Basic.elf Final_Project_ARM_Basic.hex Final_Project_ARM_Basic.list Final_Project_ARM_Basic.map default.size.stdout
+	-$(RM) Final_Project_ARM_Basic.bin Final_Project_ARM_Basic.elf Final_Project_ARM_Basic.hex Final_Project_ARM_Basic.list Final_Project_ARM_Basic.map default.size.stdout
 	-@echo ' '
 
-secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST) $(OBJCOPY_HEX)
+secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST) $(OBJCOPY_HEX) $(OBJCOPY_BIN)
 
 fail-specified-linker-script-missing:
 	@echo 'Error: Cannot find the specified linker script. Check the linker settings in the build configuration.'
