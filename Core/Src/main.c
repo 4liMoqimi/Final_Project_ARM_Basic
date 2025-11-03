@@ -145,7 +145,11 @@ int main(void)
 
 	Send_AT_Command("AT+CSQ");
 	Read_SIM800_Response();
-	HAL_Delay(2000);
+	HAL_Delay(3000);
+
+	Send_AT_Command("AT+CREG?");
+	Read_SIM800_Response();
+	HAL_Delay(3000);
 
   /* USER CODE END 2 */
 
@@ -623,7 +627,6 @@ void RGB_Set_Color(uint16_t pot)
         b = 4095 - ((pot - 3413) * 4095) / 682;
     }
 
-    // برای آند مشترک
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 4095 - r);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 4095 - g);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 4095 - b);
@@ -633,18 +636,75 @@ void Send_AT_Command(char *cmd)
 {
     sprintf((char*)txBuffer, "%s\r\n", cmd);
     HAL_UART_Transmit(&huart2, txBuffer, strlen((char*)txBuffer), 1000);
+
 }
 
+//void Read_SIM800_Response(void)
+//{
+//    memset(rxBuffer, 0, sizeof(rxBuffer));
+//    HAL_UART_Receive(&huart2, rxBuffer, sizeof(rxBuffer)-1, 2000); //timeout 2s
+//    LCD16X2_Clear(0);
+//    LCD16X2_Set_Cursor(0,1,1);
+//    LCD16X2_Write_String(0, (char*)rxBuffer);
+//}
 
 void Read_SIM800_Response(void)
 {
     memset(rxBuffer, 0, sizeof(rxBuffer));
-    HAL_UART_Receive(&huart2, rxBuffer, sizeof(rxBuffer)-1, 2000); //timeout 2s
-    LCD16X2_Clear(0);
-    LCD16X2_Set_Cursor(0,1,1);
-    LCD16X2_Write_String(0, (char*)rxBuffer);
-}
 
+    HAL_UART_Receive(&huart2, rxBuffer, sizeof(rxBuffer) - 1, 3000);
+
+    LCD16X2_Clear(0);
+
+
+    char cleanBuf[64];
+    uint8_t j = 0;
+
+    uint8_t skipFirstLine = 1;
+    for (uint16_t i = 0; i < strlen((char*)rxBuffer); i++)
+    {
+        char c = rxBuffer[i];
+
+        if (c == '\r' || c == '\n')
+        {
+            if (skipFirstLine)
+            {
+                skipFirstLine = 0;
+                j = 0;
+            }
+            else
+            {
+
+            	if (j > 0 && cleanBuf[j-1] != ' ')
+                    cleanBuf[j++] = ' ';
+            }
+        }
+        else if (c >= 32 && c <= 126)
+        {
+            cleanBuf[j++] = c;
+        }
+    }
+    cleanBuf[j] = '\0';
+
+
+    LCD16X2_Set_Cursor(0, 1, 1);
+    uint8_t row = 1;
+    uint8_t col = 1;
+
+    for (uint16_t k = 0; k < strlen(cleanBuf); k++)
+    {
+        LCD16X2_Write_Char(0, cleanBuf[k]);
+        col++;
+
+        if (row == 2 && col > 16)
+        {
+            col = 1;
+            row++;
+            if (row > 2) break;
+            LCD16X2_Set_Cursor(0, row, col);
+        }
+    }
+}
 
 /* USER CODE END 4 */
 
