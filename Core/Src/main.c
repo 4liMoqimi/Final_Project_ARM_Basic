@@ -28,8 +28,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include "stm32f4xx_hal.h"
-
 
 #include <CircularBuffer.h>
 
@@ -154,7 +152,7 @@ static GSM gsm = {0};
 static char phone[17] = {0};
 static char message[150] = {0};
 
-static const char PHONE[]   = "+989379878489";
+static const char PHONE[]   = "+989223698324";
 static const char MESSAGE[] = "This is From STM407";
 
 
@@ -174,8 +172,6 @@ void  Read_ADC_Value(void);
 float Convert_Temp_To_Celsius(uint16_t adc_value);
 void Display_ADC_On_LCD(void);
 void RGB_Set_Color(uint16_t pot);
-void Send_AT_Command(char *cmd);
-void Read_SIM800_Response(void);
 
 void GSM_init(GSM* gsm, UART_CircularBuffer* tx, UART_CircularBuffer* rx);
 void GSM_process(GSM* gsm);
@@ -192,9 +188,10 @@ uint32_t Str_getUNum(char* str, int16_t* len);
 
 void GSM_sendSms(const char* phone, const char* message);
 int16_t GSM_checkResult(void);
-void GSM_sendByte(uint8_t byte);
+
 void GSM_sendStr2(char* str);
 void GSM_sendFmt2(const char* fmt, ...);
+void GSM_sendByte(uint8_t byte);
 
 /* USER CODE END PFP */
 
@@ -239,10 +236,14 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  UART_CircularBuffer_init(&uart1Tx, &huart1, uart1TxBuf, sizeof(uart1TxBuf));
-  UART_CircularBuffer_init(&uart3Tx, &huart3, uart3TxBuf, sizeof(uart3TxBuf));
-  UART_CircularBuffer_init(&uart3Rx, &huart3, uart3RxBuf, sizeof(uart3RxBuf));
-  UART_CircularBuffer_receive(&uart3Rx);
+//  HAL_Delay(1000);
+//  GSM_sendSms(PHONE, MESSAGE);
+//
+//  UART_CircularBuffer_init(&uart1Tx, &huart1, uart1TxBuf, sizeof(uart1TxBuf));
+//  UART_CircularBuffer_init(&uart3Tx, &huart3, uart3TxBuf, sizeof(uart3TxBuf));
+//  UART_CircularBuffer_init(&uart3Rx, &huart3, uart3RxBuf, sizeof(uart3RxBuf));
+//  UART_CircularBuffer_receive(&uart3Rx);
+
 
 	LCD16X2_Init(MyLCD);
 	LCD16X2_Clear(MyLCD);
@@ -257,22 +258,8 @@ int main(void)
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 
+	HAL_Delay(3000);
 
-//	Send_AT_Command("AT");
-//	Read_SIM800_Response();
-//	HAL_Delay(2000);
-//
-//	Send_AT_Command("AT+CSQ");
-//	Read_SIM800_Response();
-//	HAL_Delay(3000);
-//
-//	Send_AT_Command("AT+CMGF=1"); // Text mode
-//	Read_SIM800_Response();
-//	HAL_Delay(3000);
-//
-//	Send_AT_Command("AT+CNMI=2,2,0,0,0");
-//	Read_SIM800_Response();
-//	HAL_Delay(3000);
 
 
 
@@ -280,11 +267,25 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+	  HAL_UART_AbortReceive(&huart3);
+	  HAL_Delay(1000);
+	  GSM_sendSms(PHONE, MESSAGE);
 
-	HAL_Delay(1000);
-	GSM_sendSms(PHONE, MESSAGE);
+	  UART_CircularBuffer_init(&uart1Tx, &huart1, uart1TxBuf, sizeof(uart1TxBuf));
+	  UART_CircularBuffer_init(&uart3Tx, &huart3, uart3TxBuf, sizeof(uart3TxBuf));
+	  UART_CircularBuffer_init(&uart3Rx, &huart3, uart3RxBuf, sizeof(uart3RxBuf));
+	  UART_CircularBuffer_receive(&uart3Rx);
 
-	GSM_init(&gsm, &uart3Tx, &uart3Rx);
+	  HAL_UART_AbortReceive(&huart3);
+	  HAL_Delay(1000);
+	  GSM_sendSms(PHONE, MESSAGE);
+
+	  UART_CircularBuffer_init(&uart1Tx, &huart1, uart1TxBuf, sizeof(uart1TxBuf));
+	  UART_CircularBuffer_init(&uart3Tx, &huart3, uart3TxBuf, sizeof(uart3TxBuf));
+	  UART_CircularBuffer_init(&uart3Rx, &huart3, uart3RxBuf, sizeof(uart3RxBuf));
+	  UART_CircularBuffer_receive(&uart3Rx);
+
+	  GSM_init(&gsm, &uart3Tx, &uart3Rx);
 
   while (1)
   {
@@ -741,207 +742,245 @@ char* trimWhitespace(char* str) {
     return str;
 }
 
-void smsProcess(void)
-{
-    if (message[0] == '\0') return;
-
-    printf("\r\nPhone: %s\r\nMessage: %s\r\n", phone, message);
-
-    char* msg = Str_ignoreWhitespace(message);
-
-    for (int i = 0; i < sizeof(leds)/sizeof(leds[0]); i++) {
-        int len = strlen(leds[i].name);
-        if (strncmp(msg, leds[i].name, len) == 0) {
-            char* state = trimWhitespace(msg + len);
-            if (strcmp(state, "ON") == 0)
-                HAL_GPIO_WritePin(leds[i].port, leds[i].pin, RESET);
-            else if (strcmp(state, "OFF") == 0)
-                HAL_GPIO_WritePin(leds[i].port, leds[i].pin, SET);
-            break;
-        }
-    }
-
-    if (strncmp(msg, "RGB", 3) == 0) {
-           char* ptr = trimWhitespace(msg + 3);
-
-           int r = 0, g = 0, b = 0;
-
-           if (sscanf(ptr, "%d %d %d", &r, &g, &b) == 3) {
-
-        	   if (r > 255) r = 255;
-        	   if (r < 0) r = 0;
-               if (g > 255) g = 255;
-               if (g < 0) g = 0;
-               if (b > 255) b = 255;
-               if (b < 0) b = 0;
-
-
-               __HAL_TIM_SET_COMPARE(&htim1, RED_CHANNEL, (r*4095)/255);
-               __HAL_TIM_SET_COMPARE(&htim1, GREEN_CHANNEL, (g*4095)/255);
-               __HAL_TIM_SET_COMPARE(&htim1, BLUE_CHANNEL, (b*4095)/255);
-
-               printf("Set RGB -> R:%d G:%d B:%d\r\n", r, g, b);
-           }
-       }
-
-    else if (strncmp(msg, "TEMP", 4) == 0) {
-
-    	Read_ADC_Value();
-
-    	float temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
-        char tempStr[20];
-        sprintf(tempStr, "%.0fC", temperature);
-        GSM_sendSms(PHONE, tempStr);
-    }
-
-
-
-    message[0] = '\0';
-}
-
 //void smsProcess(void) {
 //  if (message[0] != '\0') {
 //    // Process
 //    printf("\r\nPhone: %s\r\nMessage: %s\r\n", phone, message);
-//    // Process LED command
-//    // LED=<num>,<state>
+//
 //    char* msg = Str_ignoreWhitespace(message);
 //
+//    // ---- LED_RED Command ----
 //    if (strncmp(msg, "LED_RED", 7) == 0) {
 //      msg = msg + 7;
-//      if (strcmp(msg , " ON") == 0) {
+//      msg = Str_ignoreWhitespace(msg);
 //
-//        //printf("Led Command: %u,%u\r\n", num, state);
-//
-//          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
+//      if (strcmp(msg, "ON") == 0) {
+//        HAL_GPIO_WritePin(LED_CONFIGS[0].GPIO, LED_CONFIGS[0].Pin, GPIO_PIN_RESET);
+//        printf("LED_RED: ON\r\n");
 //      }
-//      else if((strcmp(msg , " OFF") == 0))
-//      {
-//          //printf("Led Command: %u,%u\r\n", num, state);
-//
-//            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
+//      else if (strcmp(msg, "OFF") == 0) {
+//        HAL_GPIO_WritePin(LED_CONFIGS[0].GPIO, LED_CONFIGS[0].Pin, GPIO_PIN_SET);
+//        printf("LED_RED: OFF\r\n");
 //      }
 //    }
 //
-//      if (strncmp(msg, "LED_WHITE", 9) == 0) {
-//        msg = msg + 9;
-//        if (strcmp(msg , " ON") == 0) {
-//
-//          //printf("Led Command: %u,%u\r\n", num, state);
-//
-//            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, RESET);
-//        }
-//        else if((strcmp(msg , " OFF") == 0))
-//        {
-//            //printf("Led Command: %u,%u\r\n", num, state);
-//
-//              HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, SET);
-//        }
-//      }
-//
-//        if (strncmp(msg, "LED_GREEN", 9) == 0) {
-//          msg = msg + 7;
-//          if (strcmp(msg , " ON") == 0) {
-//
-//            //printf("Led Command: %u,%u\r\n", num, state);
-//
-//              HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, RESET);
-//          }
-//          else if((strcmp(msg , " OFF") == 0))
-//          {
-//              //printf("Led Command: %u,%u\r\n", num, state);
-//
-//                HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, SET);
-//          }
-//        }
-//    }
-//
-//
-//    // End
-//    message[0] = '\0';
-//  }
-
-//void smsProcess(void) {
-//  if (message[0] != '\0') {
-//
-//    printf("\r\nPhone: %s\r\nMessage: %s\r\n", phone, message);
-//
-//    char* msg = Str_ignoreWhitespace(message);
-//    Str_toUpperCase(msg);
-//
-//    // ---- LED Commands ----
-//    if (strncmp(msg, "LED_RED", 7) == 0) {
-//      if (strstr(msg, "ON")) {
-//        HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_RESET); // active low
-//        printf("LED_RED turned ON\r\n");
-//      } else if (strstr(msg, "OFF")) {
-//        HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
-//        printf("LED_RED turned OFF\r\n");
-//      }
-//    }
-//    else if (strncmp(msg, "LED_GREEN", 9) == 0) {
-//      if (strstr(msg, "ON")) {
-//        HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_RESET);
-//        printf("LED_GREEN turned ON\r\n");
-//      } else if (strstr(msg, "OFF")) {
-//        HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
-//        printf("LED_GREEN turned OFF\r\n");
-//      }
-//    }
+//    // ---- LED_WHITE Command ----
 //    else if (strncmp(msg, "LED_WHITE", 9) == 0) {
-//      if (strstr(msg, "ON")) {
-//        HAL_GPIO_WritePin(LED_WHITE_GPIO_Port, LED_WHITE_Pin, GPIO_PIN_RESET);
-//        printf("LED_WHITE turned ON\r\n");
-//      } else if (strstr(msg, "OFF")) {
-//        HAL_GPIO_WritePin(LED_WHITE_GPIO_Port, LED_WHITE_Pin, GPIO_PIN_SET);
-//        printf("LED_WHITE turned OFF\r\n");
+//      msg = msg + 9;
+//      msg = Str_ignoreWhitespace(msg);
+//
+//      if (strcmp(msg, "ON") == 0) {
+//        HAL_GPIO_WritePin(LED_CONFIGS[1].GPIO, LED_CONFIGS[1].Pin, GPIO_PIN_RESET);
+//        printf("LED_WHITE: ON\r\n");
+//      }
+//      else if (strcmp(msg, "OFF") == 0) {
+//        HAL_GPIO_WritePin(LED_CONFIGS[1].GPIO, LED_CONFIGS[1].Pin, GPIO_PIN_SET);
+//        printf("LED_WHITE: OFF\r\n");
+//      }
+//    }
+//
+//    // ---- LED_GREEN Command ----
+//    else if (strncmp(msg, "LED_GREEN", 9) == 0) {
+//      msg = msg + 9;
+//      msg = Str_ignoreWhitespace(msg);
+//
+//      if (strcmp(msg, "ON") == 0) {
+//        HAL_GPIO_WritePin(LED_CONFIGS[2].GPIO, LED_CONFIGS[2].Pin, GPIO_PIN_RESET);
+//        printf("LED_GREEN: ON\r\n");
+//      }
+//      else if (strcmp(msg, "OFF") == 0) {
+//        HAL_GPIO_WritePin(LED_CONFIGS[2].GPIO, LED_CONFIGS[2].Pin, GPIO_PIN_SET);
+//        printf("LED_GREEN: OFF\r\n");
 //      }
 //    }
 //
 //    // ---- RGB Command ----
 //    else if (strncmp(msg, "RGB", 3) == 0) {
-//      int r, g, b;
-//      if (sscanf(msg, "RGB %d %d %d", &r, &g, &b) == 3) {
-//        printf("RGB set to R=%d, G=%d, B=%d\r\n", r, g, b);
+//      msg = msg + 3;
+//      msg = Str_ignoreWhitespace(msg);
 //
-//        if (r > 255) r = 255;
-//        if (g > 255) g = 255;
-//        if (b > 255) b = 255;
-//        if (r < 0) r = 0;
-//        if (g < 0) g = 0;
-//        if (b < 0) b = 0;
+//      int16_t len;
+//      uint16_t r, g, b;
 //
-//        uint16_t r4095 = (uint16_t)((r / 255.0f) * 4095);
-//        uint16_t g4095 = (uint16_t)((g / 255.0f) * 4095);
-//        uint16_t b4095 = (uint16_t)((b / 255.0f) * 4095);
+//      r = Str_getUNum(msg, &len);
+//      msg += len;
+//      msg = Str_ignoreWhitespace(msg);
 //
+//      g = Str_getUNum(msg, &len);
+//      msg += len;
+//      msg = Str_ignoreWhitespace(msg);
 //
-//        uint16_t pot = (r4095 + g4095 + b4095) / 3;
+//      b = Str_getUNum(msg, NULL);
 //
-//        printf("RGB converted to pot=%u\r\n", pot);
+//      if (r > 255) r = 255;
+//      if (g > 255) g = 255;
+//      if (b > 255) b = 255;
 //
+//      __HAL_TIM_SET_COMPARE(&htim1, RED_CHANNEL, (r * 4095) / 255);
+//      __HAL_TIM_SET_COMPARE(&htim1, GREEN_CHANNEL, (g * 4095) / 255);
+//      __HAL_TIM_SET_COMPARE(&htim1, BLUE_CHANNEL, (b * 4095) / 255);
 //
-//      } else {
-//        printf("Invalid RGB command format!\r\n");
-//      }
+//      printf("RGB: %u,%u,%u\r\n", r, g, b);
 //    }
 //
-//    // ---- Temperature Command ----
+//    // ---- TEMP Command ----
 //    else if (strncmp(msg, "TEMP", 4) == 0) {
-//      float t = Convert_Temp_To_Celsius(ADC_Values[1]);
-//      printf("Temperature = %.2f °C\r\n", t);
-//      //GSM_SendSMS(phone, "Temp: %.2f C", t);
+//      Read_ADC_Value();
+//      float temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
+//      char tempStr[32];
+//      sprintf(tempStr, "Temp: %.1fC", temperature);
+//
+//      printf("Temperature: %.1fC\r\n", temperature);
+//
+//      HAL_UART_AbortReceive(&huart3);
+//      HAL_Delay(200);
+//      GSM_sendSms(phone, tempStr);
+//      HAL_Delay(100);
+//      UART_CircularBuffer_receive(&uart3Rx);
 //    }
 //
-//    // ---- Unknown Command ----
-//    else {
-//      printf("Unknown command!\r\n");
-//    }
-//
-//
+//    // End
 //    message[0] = '\0';
 //  }
 //}
+
+void smsProcess(void) {
+  if (message[0] != '\0') {
+    // Process
+    printf("\r\nPhone: %s\r\nMessage: %s\r\n", phone, message);
+    // Process LED command
+    // LED=<num>,<state>
+    char* msg = Str_ignoreWhitespace(message);
+
+    if (strncmp(msg, "LED", 3) == 0) {
+      msg = msg + 3;
+      if (*msg == '_') {
+        msg++;
+        int16_t len;
+        uint8_t num = 255;
+        uint8_t state;
+
+//        num = Str_getUNum(msg, &len);
+//        msg += len + 1;
+//        state = Str_getUNum(msg, NULL);
+        if(strncmp(msg , "RED" , 3) == 0)
+        {
+        	num  = 0;
+        	msg += 3;
+        }
+        else if(strncmp(msg , "WHITE" , 5) == 0)
+        {
+        	num  = 1;
+        	msg += 5;
+        }
+        else if(strncmp(msg , "GREEN" , 5) == 0)
+        {
+        	num  = 2;
+        	msg += 5;
+        }
+        else
+        {
+        	num = Str_getUNum(msg , &len);
+        	msg += len;
+        }
+
+        	msg = Str_ignoreWhitespace(msg);
+
+        	if       (strncmp(msg , "ON" , 2) == 0) state = 1;
+        	else if (strncmp(msg , "OFF" , 3) == 0) state = 0;
+
+        	else               state = Str_getUNum(msg, NULL);
+
+
+
+            printf("Led Command: %u,%u\r\n", num, state);
+
+
+
+        if (num < LED_CONFIGS_LEN) {
+          HAL_GPIO_WritePin(LED_CONFIGS[num].GPIO, LED_CONFIGS[num].Pin, !state);
+        }
+      }
+    }
+
+
+     //End
+    message[0] = '\0';
+  }
+}
+
+//void smsProcess(void)
+//{
+//    if (message[0] == '\0') return;
+//
+//
+//    printf("\r\nPhone: %s\r\nMessage: %s\r\n", phone, message);
+//
+//    char* msg = Str_ignoreWhitespace(message);
+//
+//    // کنترل LEDها
+//    for (int i = 0; i < sizeof(leds)/sizeof(leds[0]); i++) {
+//        int len = strlen(leds[i].name);
+//        if (strncmp(msg, leds[i].name, len) == 0) {
+//            char* state = trimWhitespace(msg + len);
+//            if (strcmp(state, "ON") == 0)
+//                HAL_GPIO_WritePin(leds[i].port, leds[i].pin, RESET);
+//            else if (strcmp(state, "OFF") == 0)
+//                HAL_GPIO_WritePin(leds[i].port, leds[i].pin, SET);
+//
+//            message[0] = '\0';  // پاک کردن پیام
+//            return;
+//        }
+//    }
+//
+//    // کنترل RGB
+//    if (strncmp(msg, "RGB", 3) == 0) {
+//        char* ptr = trimWhitespace(msg + 3);
+//        int r = 0, g = 0, b = 0;
+//
+//        if (sscanf(ptr, "%d %d %d", &r, &g, &b) == 3) {
+//            // محدود کردن مقادیر
+//            r = (r < 0) ? 0 : (r > 255) ? 255 : r;
+//            g = (g < 0) ? 0 : (g > 255) ? 255 : g;
+//            b = (b < 0) ? 0 : (b > 255) ? 255 : b;
+//
+//            __HAL_TIM_SET_COMPARE(&htim1, RED_CHANNEL, (r * 4095) / 255);
+//            __HAL_TIM_SET_COMPARE(&htim1, GREEN_CHANNEL, (g * 4095) / 255);
+//            __HAL_TIM_SET_COMPARE(&htim1, BLUE_CHANNEL, (b * 4095) / 255);
+//
+//            printf("Set RGB -> R:%d G:%d B:%d\r\n", r, g, b);
+//        }
+//
+//        message[0] = '\0';  // پاک کردن پیام
+//        return;
+//    }
+//
+//    // خواندن دما
+//    else if (strncmp(msg, "TEMP", 4) == 0) {
+//        Read_ADC_Value();
+//        float temperature = Convert_Temp_To_Celsius(ADC_Values[1]);
+//        char tempStr[32];
+//        sprintf(tempStr, "Temp: %.1fC", temperature);
+//
+//        // توقف دریافت موقت
+//        HAL_UART_AbortReceive(&huart3);
+//        HAL_Delay(200);  // کاهش delay
+//
+//        // ارسال SMS به همان شماره فرستنده
+//        GSM_sendSms(phone, tempStr);
+//        printf("SMS sent successfully\r\n");
+//
+//        HAL_Delay(100);
+//        UART_CircularBuffer_receive(&uart3Rx);
+//
+//        message[0] = '\0';  // پاک کردن پیام
+//        return;
+//    }
+//
+//    // پاک کردن پیام در صورت عدم شناسایی
+//    message[0] = '\0';
+//}
+
 
 
 void GSM_init(GSM* gsm, UART_CircularBuffer* tx, UART_CircularBuffer* rx) {
@@ -955,6 +994,7 @@ void GSM_init(GSM* gsm, UART_CircularBuffer* tx, UART_CircularBuffer* rx) {
 }
 
 void GSM_process(GSM* gsm) {
+
   if (gsm->State == GSM_State_Config && gsm->InSendCommand == 0) {
     switch (gsm->ConfigState) {
       case GSM_ConfigState_AT:
@@ -1214,72 +1254,6 @@ int fputc(int c, FILE* f) {
 }
 
 
-//void Send_AT_Command(char *cmd)
-//{
-//    sprintf((char*)txBuffer, "%s\r\n", cmd);
-//    HAL_UART_Transmit(&huart3, txBuffer, strlen((char*)txBuffer), 1000);
-//
-//}
-//
-//
-//void Read_SIM800_Response(void)
-//{
-//    memset(rxBuffer, 0, sizeof(rxBuffer));
-//
-//    HAL_UART_Receive(&huart3, rxBuffer, sizeof(rxBuffer) - 1, 3000);
-//
-//    LCD16X2_Clear(0);
-//
-//
-//    char cleanBuf[64];
-//    uint8_t j = 0;
-//
-//    uint8_t skipFirstLine = 1;
-//    for (uint16_t i = 0; i < strlen((char*)rxBuffer); i++)
-//    {
-//        char c = rxBuffer[i];
-//
-//        if (c == '\r' || c == '\n')
-//        {
-//            if (skipFirstLine)
-//            {
-//                skipFirstLine = 0;
-//                j = 0;
-//            }
-//            else
-//            {
-//
-//            	if (j > 0 && cleanBuf[j-1] != ' ')
-//                    cleanBuf[j++] = ' ';
-//            }
-//        }
-//        else if (c >= 32 && c <= 126)
-//        {
-//            cleanBuf[j++] = c;
-//        }
-//    }
-//    cleanBuf[j] = '\0';
-//
-//
-//    LCD16X2_Set_Cursor(0, 1, 1);
-//    uint8_t row = 1;
-//    uint8_t col = 1;
-//
-//    for (uint16_t k = 0; k < strlen(cleanBuf); k++)
-//    {
-//        LCD16X2_Write_Char(0, cleanBuf[k]);
-//        col++;
-//
-//        if (row == 2 && col > 16)
-//        {
-//            col = 1;
-//            row++;
-//            if (row > 2) break;
-//            LCD16X2_Set_Cursor(0, row, col);
-//        }
-//    }
-//}
-
 void GSM_sendSms(const char* phone, const char* message) {
   // Check Connection
   GSM_sendStr2("AT\r\n");
@@ -1335,11 +1309,6 @@ int16_t GSM_checkResult(void) {
   }
 }
 
-void GSM_sendByte(uint8_t byte)
-{
-  HAL_UART_Transmit(&huart3, &byte, sizeof(byte), sizeof(byte));
-}
-
 void GSM_sendStr2(char* str) {
   uint16_t len = strlen(str);
   HAL_UART_Transmit(&huart3, (uint8_t*) str, len, len + 1);
@@ -1352,6 +1321,9 @@ void GSM_sendFmt2(const char* fmt, ...) {
   va_end(args);
 
   HAL_UART_Transmit(&huart3, (uint8_t*) buf, len, len + 1);
+}
+void GSM_sendByte(uint8_t byte) {
+  HAL_UART_Transmit(&huart3, &byte, sizeof(byte), sizeof(byte));
 }
 
 /* USER CODE END 4 */
